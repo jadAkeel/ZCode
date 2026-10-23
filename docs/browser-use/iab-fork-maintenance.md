@@ -19,6 +19,16 @@ disabled at build time. They do not change the user's installed application or s
 Keep the build/test home, Electron userData and sessionData separate, as described in the build guide.
 Build-time values must be supplied when compiling the desktop bundles, not only when packaging.
 
+For an isolated local launch, set `ZCODE_DESKTOP_SKIP_OS_INTEGRATION=1` in the launcher's process
+environment. This optional Desktop runtime flag skips registration of the `zcode://` handler and
+Finder/Explorer open-folder integration, at startup and on locale changes, so a test/fork build does
+not take over the installed application's OS entrypoints. The default is unchanged (registration
+runs); only the exact value `1` opts out. It does not
+change callback validation, providers, credentials or application permission rules. This is a launch
+setting, not a persistent user preference, and the app must be rebuilt once to include its guard.
+Use `scripts/start-iab-preview.cmd` beside an `artifacts/win-unpacked` directory for the Windows fork
+layout. It creates a marked, isolated profile and refuses to reuse an existing unmarked directory.
+
 The public upstream Computer Use package is an unavailable-by-design placeholder. A source build
 therefore does not reproduce the proprietary Computer Use implementation from an installed official
 distribution. This fork does not replace it or modify other plugins/providers to imitate it. IAB

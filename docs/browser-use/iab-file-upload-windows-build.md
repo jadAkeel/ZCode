@@ -81,6 +81,7 @@ $env:ZCODE_HOME = Join-Path $devRoot ".zcode"
 $env:ZCODE_DATA_BASE_DIR = $devRoot
 $env:ZCODE_DESKTOP_HOME_DIR = $devRoot
 $env:ZCODE_DESKTOP_APPLICATION_NAME = "ZCode Upload Development"
+$env:ZCODE_DESKTOP_SKIP_OS_INTEGRATION = "1"
 $env:ZCODE_DESKTOP_USER_DATA_DIR = Join-Path $devRoot "electron"
 $env:ZCODE_DESKTOP_SESSION_DATA_DIR = Join-Path $devRoot "electron-session"
 $env:ZCODE_PREVIEW_IDENTITY = "1"

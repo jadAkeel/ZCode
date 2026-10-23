@@ -2159,20 +2159,22 @@ app.whenReady().then(async () => {
   // 预热曾在读取持久化语言之前启动，X-Client-Language 会带默认语言并进入 1 小时缓存；
   // 必须在 currentApplicationLocale 确定之后再启动。
   void desktopContextPromptRollout?.refresh();
-  installFinderOpenFolderWorkflow({
-    platform: process.platform,
-    locale: currentApplicationLocale,
-    homeDir: app.getPath("home"),
-    logger,
-  });
-  await installWindowsOpenFolderContextMenu({
-    platform: process.platform,
-    executablePath: process.execPath,
-    argv: process.argv,
-    isDefaultApp: Boolean(process.defaultApp),
-    locale: currentApplicationLocale,
-    logger,
-  });
+  if (process.env.ZCODE_DESKTOP_SKIP_OS_INTEGRATION !== "1") {
+    installFinderOpenFolderWorkflow({
+      platform: process.platform,
+      locale: currentApplicationLocale,
+      homeDir: app.getPath("home"),
+      logger,
+    });
+    await installWindowsOpenFolderContextMenu({
+      platform: process.platform,
+      executablePath: process.execPath,
+      argv: process.argv,
+      isDefaultApp: Boolean(process.defaultApp),
+      locale: currentApplicationLocale,
+      logger,
+    });
+  }
   try {
     await applyDesktopChromiumNetworkPolicies(session, bootstrapSettings ?? {}, logger);
   } catch (error) {
@@ -2329,22 +2331,24 @@ app.whenReady().then(async () => {
           win.webContents.send(PlatformChannels.ApplicationLocaleChanged, currentApplicationLocale);
         }
       }
-      installFinderOpenFolderWorkflow({
-        platform: process.platform,
-        locale: currentApplicationLocale,
-        homeDir: app.getPath("home"),
-        logger,
-      });
-      // Windows Explorer 右键菜单是注册表持久项，renderer 切换语言不会自动刷新。
-      // 这里跟 macOS Finder Service 一样在 locale 变化时重写菜单文案，避免继续显示旧语言。
-      await installWindowsOpenFolderContextMenu({
-        platform: process.platform,
-        executablePath: process.execPath,
-        argv: process.argv,
-        isDefaultApp: Boolean(process.defaultApp),
-        locale: currentApplicationLocale,
-        logger,
-      });
+      if (process.env.ZCODE_DESKTOP_SKIP_OS_INTEGRATION !== "1") {
+        installFinderOpenFolderWorkflow({
+          platform: process.platform,
+          locale: currentApplicationLocale,
+          homeDir: app.getPath("home"),
+          logger,
+        });
+        // Windows Explorer 右键菜单是注册表持久项，renderer 切换语言不会自动刷新。
+        // 这里跟 macOS Finder Service 一样在 locale 变化时重写菜单文案，避免继续显示旧语言。
+        await installWindowsOpenFolderContextMenu({
+          platform: process.platform,
+          executablePath: process.execPath,
+          argv: process.argv,
+          isDefaultApp: Boolean(process.defaultApp),
+          locale: currentApplicationLocale,
+          logger,
+        });
+      }
       configureDockMenu(
         () =>
           getDesktopMenuLabelByLocale(

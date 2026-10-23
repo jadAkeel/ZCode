@@ -402,6 +402,11 @@ export function registerDeepLinkProtocol(
   },
   options: { iconPath?: string } = {},
 ) {
+  // 隔离 fork/E2E 启动不能抢占正式应用的 zcode:// handler；显式运行时 opt-out 不写注册表。
+  if (process.env.ZCODE_DESKTOP_SKIP_OS_INTEGRATION === "1") {
+    logger.info("[deep-link] protocol registration skipped for isolated runtime");
+    return;
+  }
   const scheme = "zcode";
 
   // 外部 URL 必须位于 -- 后；否则 Windows 引号拆分可把 URL 内容变成 Electron 启动参数。

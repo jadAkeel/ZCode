@@ -62,6 +62,39 @@ afterEach(() => {
 });
 
 describe("desktopOAuthDeepLink workspace open routing", () => {
+  it("isolated fork launch leaves the installed protocol handler untouched", async () => {
+    vi.stubEnv("ZCODE_DESKTOP_SKIP_OS_INTEGRATION", "1");
+    try {
+      const { registerDeepLinkProtocol } = await import("../src/main/desktopOAuthDeepLink.js");
+      const logger = { info: vi.fn(), warn: vi.fn() };
+      registerDeepLinkProtocol(logger);
+      expect(electronMocks.setAsDefaultProtocolClient).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        "[deep-link] protocol registration skipped for isolated runtime",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("normal launches retain protocol registration", async () => {
+    vi.stubEnv("ZCODE_DESKTOP_SKIP_OS_INTEGRATION", "0");
+    try {
+      const { registerDeepLinkProtocol } = await import("../src/main/desktopOAuthDeepLink.js");
+      registerDeepLinkProtocol({ info: vi.fn(), warn: vi.fn() });
+      if (process.platform === "win32") {
+        expect(electronMocks.setAsDefaultProtocolClient).toHaveBeenCalledWith(
+          "zcode",
+          process.execPath,
+          expect.any(Array),
+        );
+      } else {
+        expect(electronMocks.setAsDefaultProtocolClient).toHaveBeenCalledWith("zcode");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("缓存冷启动时命中未就绪窗口的 workspace open 请求，等 renderer ready 后再投递", async () => {
     const workspacePath = createTempWorkspace();
     const targetWindow = createMockWindow(7);
