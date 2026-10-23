@@ -28,6 +28,8 @@ import { executeBrowserCommandOnView, type ControlledView } from "./browserComma
 import { executeIabPlaywrightLocator } from "./browserPlaywrightLocatorExecutor.js";
 import { recordBrowserVideo, type BrowserWebmRecorderFactory } from "./browserVideoRecorder.js";
 import { normalizePlaywrightTimeout } from "./browserPlaywrightTimeout.js";
+import { approveIabUpload, createIabFileChooser } from "./fileUpload/module.js";
+import { UploadError, type ApproveUpload, type IabFileChooser } from "./fileUpload/contract.js";
 import type {
   BrowserScreenshotSurfaceCoordinator,
   BrowserScreenshotSurfaceLease,
@@ -85,10 +87,13 @@ interface GuestWebContents {
     attach(protocolVersion?: string): void;
     detach(): void;
     sendCommand(method: string, params?: unknown, sessionId?: string): Promise<unknown>;
-    on(event: "message", listener: (event: unknown, method: string, params: unknown) => void): void;
+    on(
+      event: "message",
+      listener: (event: unknown, method: string, params: unknown, sessionId?: string) => void,
+    ): void;
     removeListener(
       event: "message",
-      listener: (event: unknown, method: string, params: unknown) => void,
+      listener: (event: unknown, method: string, params: unknown, sessionId?: string) => void,
     ): void;
   };
   once(event: "destroyed", listener: () => void): void;
@@ -179,6 +184,9 @@ interface ManagedTab {
    * CDP 通路要靠 debugger.detach() 才真正断开。
    */
   cdpMessageCleanup?: () => void;
+  fileChooser?: IabFileChooser;
+  fileChooserTurnId?: string;
+  fileChooserCleanup?: Promise<void>;
   /**
    * 注销 render-process-gone 监听。该监听负责在 guest renderer 被杀、WebContents 尚存的
    * 窗口里主动断开 CDP —— 这是唯一能避免 api::Debugger 走隐式析构的时机。
@@ -268,6 +276,8 @@ type BrowserTabRecoveryStorePort = Pick<
   Partial<Pick<BrowserTabRecoveryStore, "whenIdle">>;
 
 export interface BrowserGuestManagerResidencyOptions {
+  /** 仅由 desktop composition root 或隔离测试注入，绝不接受 agent 命令提供的授权。 */
+  approveUpload?: ApproveUpload;
   tabLimit?: number;
   suspendAckTimeoutMs?: number;
   now?: () => number;
@@ -366,6 +376,7 @@ function toRestoredShell(
 }
 
 function isSideEffecting(command: BrowserCommand): boolean {
+  if (command.method === "playwright" && command.action.name === "fileChooserSetFiles") return true;
   if (command.method === "playwright" && command.action.name === "locator") {
     return [
       "click",
@@ -1345,25 +1356,6 @@ export class BrowserGuestManager {
       }
       return this.withMeta({ ok: true, elapsedMs: Date.now() - startedAt }, context, tab);
     }
-    if (
-      command.method === "playwright" &&
-      (command.action.name === "fileChooserSetFiles" ||
-        (command.action.name === "waitForEvent" && command.action.event === "filechooser"))
-    ) {
-      // IAB backend 不支持 filechooser；不能伪造成功或把它误当普通 DOM fill。
-      return this.withMeta(
-        {
-          ok: false,
-          error: {
-            code: "capability_unsupported",
-            message: "File uploads are not supported by iab",
-          },
-          elapsedMs: Date.now() - startedAt,
-        },
-        context,
-        tab,
-      );
-    }
     if (command.method === "playwright" && command.action.name === "downloadPath") {
       const record = this.downloads.get(command.action.downloadId);
       if (!record || record.tabId !== tab.tabId) {
@@ -1460,6 +1452,107 @@ export class BrowserGuestManager {
     };
     const sendCdpCommand = (method: string, params?: unknown, sessionId?: string) =>
       this.sendGuestCdpCommand(tab, guest, method, params, sessionId, assertCurrentGuest);
+
+    if (
+      command.method === "playwright" &&
+      (command.action.name === "fileChooserSetFiles" ||
+        (command.action.name === "waitForEvent" && command.action.event === "filechooser"))
+    ) {
+      try {
+        if (
+          command.action.name === "fileChooserSetFiles" &&
+          (!tab.fileChooser || tab.fileChooserTurnId !== context.turnId)
+        ) {
+          throw new UploadError(
+            "backend_unavailable",
+            "File chooser is stale or unavailable for this turn",
+          );
+        }
+        if (!tab.fileChooser) {
+          const ownerScope = scopeKey(context);
+          const cleanup = tab.fileChooserCleanup;
+          const assertOwnedGuest = () => {
+            assertCurrentGuest();
+            if (tab.lifecycle === "closed" || scopeKey(tab.owner) !== ownerScope) {
+              throw new UploadError("backend_unavailable", "File chooser owner changed");
+            }
+          };
+          tab.fileChooser = createIabFileChooser({
+            send: async (method, params) => {
+              await cleanup;
+              assertOwnedGuest();
+              return await this.sendGuestCdpCommand(
+                tab,
+                guest,
+                method,
+                params,
+                undefined,
+                assertOwnedGuest,
+              );
+            },
+            assertCurrent: assertOwnedGuest,
+            approve: this.residencyOptions.approveUpload ?? approveIabUpload,
+            windowId: context.windowId,
+            changed: () => {
+              this.refreshRuntimeProtection(tab.tabId);
+              // chooser pin 会消费掉之前的 idle timer；结束/过期后必须恢复释放，不能永久挂着 CDP。
+              if (
+                this.tabs.get(tab.tabId) === tab &&
+                tab.guestLifecycle === "attached" &&
+                !tab.fileChooser?.active
+              ) {
+                this.scheduleGuestCdpIdleRelease(tab);
+              }
+            },
+          });
+        }
+        const action = command.action;
+        if (action.name === "waitForEvent" && !tab.fileChooser.active)
+          tab.fileChooserTurnId = context.turnId;
+        const value =
+          action.name === "waitForEvent"
+            ? await tab.fileChooser.wait(
+                normalizePlaywrightTimeout(action.timeoutMs, 120_000),
+                running.controller.signal,
+              )
+            : await tab.fileChooser.setFiles(
+                action.fileChooserId,
+                action.files,
+                normalizePlaywrightTimeout(action.timeoutMs ?? 120_000, 120_000),
+                running.controller.signal,
+              );
+        return this.withMeta({ ok: true, value, elapsedMs: Date.now() - startedAt }, context, tab);
+      } catch (error) {
+        return this.withMeta(
+          {
+            ok: false,
+            error: {
+              code: error instanceof UploadError ? error.code : "execution_error",
+              message: error instanceof Error ? error.message : String(error),
+              sideEffect: error instanceof UploadError ? error.sideEffect : "none",
+            },
+            elapsedMs: Date.now() - startedAt,
+          },
+          context,
+          tab,
+        );
+      }
+    }
+    // waitForEvent 与 click 并发时，click 不能越过 Page interception 的初始化屏障。
+    try {
+      await tab.fileChooserCleanup;
+      await tab.fileChooser?.ready();
+    } catch (error) {
+      return this.withMeta(
+        {
+          ok: false,
+          error: { code: "execution_error", message: String(error), sideEffect: "none" },
+          elapsedMs: Date.now() - startedAt,
+        },
+        context,
+        tab,
+      );
+    }
 
     if (
       command.method === "playwright" &&
@@ -2700,6 +2793,7 @@ export class BrowserGuestManager {
 
   private releaseToUser(tab: ManagedTab): void {
     if (tab.claimable) return;
+    this.clearFileChooser(tab);
     if (!tab.userOwner) {
       tab.userOwner = {
         ...tab.owner,
@@ -2934,6 +3028,13 @@ export class BrowserGuestManager {
   }
 
   endTurn(context: InternalExecutionContext, turnId?: string): void {
+    for (const tab of this.tabs.values()) {
+      if (
+        sameScope(tab.owner, context) &&
+        (turnId === undefined || tab.fileChooserTurnId === turnId)
+      )
+        this.clearFileChooser(tab);
+    }
     this.abortRecordings(
       (entry) =>
         sameScope(entry.context, context) &&
@@ -2953,6 +3054,8 @@ export class BrowserGuestManager {
     // deliverable 和 claimed user tab 仍按显式生命周期约定释放控制权，但 view 不关闭。
     for (const tab of this.tabs.values()) {
       if (!sameScope(tab.owner, context)) continue;
+      if (turnId !== undefined && tab.fileChooser?.active && tab.fileChooserTurnId !== turnId)
+        continue;
       if (tab.lifecycle === "handoff") continue;
       if (tab.lifecycle === "deliverable" || tab.origin === "user") this.releaseToUser(tab);
     }
@@ -2983,6 +3086,7 @@ export class BrowserGuestManager {
       if (this.tabs.get(tab.tabId) !== tab || tab.guest !== guest) return;
       if (tab.guestLifecycle !== "attached") return;
       if (tab.pendingCdpCommands > 0) return;
+      if (tab.fileChooser?.active) return;
       if (safeBool(() => guest.isDestroyed(), true)) return;
       try {
         if (!guest.debugger.isAttached()) {
@@ -3143,6 +3247,7 @@ export class BrowserGuestManager {
     if (!guest.on || !guest.removeListener) return;
     const tabId = tab.tabId;
     const onRenderProcessGone = (...args: unknown[]): void => {
+      if (this.tabs.get(tabId)?.guest === guest) this.clearFileChooser(tab);
       const reason = safeStr(
         () => String((args[1] as { reason?: string } | undefined)?.reason ?? "unknown"),
         "unknown",
@@ -3180,10 +3285,19 @@ export class BrowserGuestManager {
     void this.sendGuestCdpCommand(tab, guest, "Page.enable").catch((error: unknown) => {
       this.log?.(`[browser-use] Page.enable failed tabId=${tabId}: ${String(error)}`);
     });
-    const onMessage = (_event: unknown, method: string, params: unknown): void => {
+    const onMessage = (
+      _event: unknown,
+      method: string,
+      params: unknown,
+      sessionId?: string,
+    ): void => {
       const current = this.tabs.get(tabId);
       if (!current || current.guest !== guest || current.lifecycle === "closed") return;
-      if (method === "Page.javascriptDialogOpening") {
+      if (method === "Page.fileChooserOpened") {
+        current.fileChooser?.opened(params, sessionId);
+      } else if (method === "Page.frameNavigated") {
+        this.clearFileChooser(current);
+      } else if (method === "Page.javascriptDialogOpening") {
         // 打点：dialog 事件到达 main 的时刻，用于区分「事件黑洞」与「dialog 已被 detach
         // 清理」两种 getDialog=null 成因。
         this.log?.(`[browser-use] dialog opening event received tabId=${tabId}`);
@@ -3996,7 +4110,10 @@ export class BrowserGuestManager {
   }
 
   private hasRunningRequestForTab(tabId: string): boolean {
-    return [...this.runningRequests.values()].some((request) => request.tabId === tabId);
+    return (
+      Boolean(this.tabs.get(tabId)?.fileChooser?.active) ||
+      [...this.runningRequests.values()].some((request) => request.tabId === tabId)
+    );
   }
 
   private isTabCaptureActive(tab: ManagedTab): boolean {
@@ -4223,7 +4340,17 @@ export class BrowserGuestManager {
     return { tabs: this.tabs.size, closedTabIds: this.closedTabIds.size };
   }
 
+  private clearFileChooser(tab: ManagedTab): void {
+    const chooser = tab.fileChooser;
+    if (!chooser) return;
+    chooser.dispose();
+    tab.fileChooserCleanup = chooser.ready().catch(() => undefined);
+    tab.fileChooser = undefined;
+    tab.fileChooserTurnId = undefined;
+  }
+
   private detachGuest(tab: ManagedTab): void {
+    this.clearFileChooser(tab);
     const guest = tab.guest;
     const guestDestroyed = guest ? safeBool(() => guest.isDestroyed(), true) : true;
     if (guest && !this.guestRecoveryFlights.has(tab.tabId)) {

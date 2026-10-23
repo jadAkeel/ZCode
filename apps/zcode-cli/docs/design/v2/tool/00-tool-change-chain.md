@@ -1,5 +1,14 @@
 # Tool Change Chain Spec
 
+## IAB local file uploads (2026-10-22)
+
+Existing browser client `waitForEvent("filechooser")` / `setFiles` → authenticated BrowserControl
+broker → owned desktop tab/guest → CDP chooser interception → canonical regular-file validation →
+one-time desktop file approval → owner/guest/node/file revalidation → CDP file assignment. No tool,
+provider or model configuration changes. `setFiles([])` cancels a chooser. Shared command schema and
+client accept this empty list; all existing session and browser permission gates remain in place.
+Regression and real Electron loopback verification are defined in the root IAB file upload spec.
+
 ## Bash 临时输出路径隔离
 
 主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →

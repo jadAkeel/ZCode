@@ -615,7 +615,6 @@ export class PlaywrightFileChooser {
   ): Promise<void> {
     if (files == null) throw new Error("fileChooser.setFiles requires files");
     const normalized = Array.isArray(files) ? files : [files];
-    if (normalized.length === 0) throw new Error("fileChooser.setFiles requires at least one file");
     try {
       await runAction(this.run, {
         name: "fileChooserSetFiles",

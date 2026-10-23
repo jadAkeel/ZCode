@@ -732,6 +732,18 @@ modules:
     layers:
       ui: .
     owner: conversation
+  # iab-file-upload：由 architecture:adopt 登记
+  - id: iab-file-upload
+    roots:
+      - packages/desktop/src/main/browserView/fileUpload
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/desktop/src/main/browserView/fileUpload/module.ts
+      - packages/desktop/src/main/browserView/fileUpload/contract.ts
+    layers:
+      adapters: .
+    owner: desktop
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。

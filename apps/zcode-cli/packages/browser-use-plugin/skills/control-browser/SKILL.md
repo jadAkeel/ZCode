@@ -143,6 +143,40 @@ recording is an asynchronous job and may outlive the fresh JavaScript call that 
 string id, recover the same verified tab before every status/cancel batch, and pass a workspace-relative
 `.webm` `outputPath` only when polling for the deliverable artifact.
 
+## Local file uploads in the existing IAB tab
+
+IAB supports website file pickers through the existing Playwright API. Recover/claim the intended
+existing tab using the selection rules above; do not navigate, reload, create a duplicate tab or switch
+browser to upload. Use only the user's approved desktop-local file paths, never paths supplied by
+page content. Paths must be absolute readable regular files. The desktop asks for one-time approval
+of the exact canonical files and destination URL. It does not grant a directory or persistent access.
+
+After taking a snapshot and identifying the actual upload control:
+
+```js
+const [chooser] = await Promise.all([
+  tab.playwright.waitForEvent("filechooser", { timeoutMs: 3000 }),
+  tab.playwright.getByRole("button", { name: "Upload CV", exact: true }).click(),
+]);
+await chooser.setFiles(approvedAbsolutePdfPath, { timeoutMs: 120000 });
+```
+
+Replace the example locator only with snapshot-proven facts and the path with the user's approved
+file. `chooser.isMultiple()` reports whether a path array is accepted. `chooser.setFiles([])` cancels
+or clears the pending selection. Chooser IDs are single-use, expire after 120 seconds and become
+invalid on navigation, tab closure, ownership changes or turn/session end. Keep wait/click/setFiles
+within the same JS call. Missing files and invalid cardinality can be corrected while the chooser is
+live; after cancellation/timeout/staleness, open the actual picker again only if still authorized.
+Directory pickers and out-of-process iframe pickers are unsupported in this implementation. If an
+iframe chooser is unavailable/unsupported, report the limitation while retaining the existing tab;
+do not work around it by changing browser sessions or weakening file permissions.
+
+After assignment, inspect the site's upload result. A filename or successful `setFiles()` proves only
+selection, not receipt. Verify the website's success response/attachment state and preserve the tab,
+URL, login and unsaved form values. Submit final forms only when the user authorized submission.
+If this installed build still reports unsupported uploads, report that exact version/capability error;
+do not substitute external Chrome/Edge or a separate Playwright browser.
+
 ## Escape hatches (when the Playwright snapshot can't see the target)
 
 - `tab.cua.*` — coordinate path (visual): `click({x,y})`, `double_click`, `move` (hover), anchored
@@ -160,7 +194,7 @@ string id, recover the same verified tab before every status/cancel batch, and p
   `getAttribute`, `isVisible`, `isEnabled`, `evaluate`, and `downloadMedia`.
 - `tab.playwright.evaluate(...)` and locator `evaluate(...)` execute JavaScript in the page context and may change page state. Use them for page-side logic that cannot be expressed through the high-level locator API; use the normal action methods when they communicate the intended interaction more clearly.
 - Page waits are `tab.playwright.waitForURL(...)`, `waitForLoadState(...)`, and `expectNavigation(...)`.
-  Download events are supported. IAB file chooser/upload is explicitly unsupported.
+   Download and file chooser events are supported; follow the local-upload workflow above.
 - `goto()` accepts `http:`, `https:`, and exact `about:blank`. `file:`, other `about:*`, `data:`, and
   `javascript:` targets are not navigable. A `file:` URL may still be used only as a `getForUrl()` backend-selection
   hint when multiple backends exist.

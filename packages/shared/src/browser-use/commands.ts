@@ -271,7 +271,7 @@ export const browserPlaywrightActionSchema = z.discriminatedUnion("name", [
     .object({
       name: z.literal("fileChooserSetFiles"),
       fileChooserId: z.string().min(1),
-      files: z.array(z.string()).min(1),
+      files: z.array(z.string().min(1)).max(100),
       timeoutMs: browserPlaywrightTimeoutSchema,
     })
     .strict(),
