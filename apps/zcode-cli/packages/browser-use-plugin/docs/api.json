@@ -425,8 +425,7 @@
               "signature": "waitForEvent(event: \"download\", options?): Promise<PlaywrightDownload>"
             },
             {
-              "signature": "waitForEvent(event: \"filechooser\", options?): Promise<PlaywrightFileChooser>",
-              "unsupportedByDefaultIn": ["iab"]
+              "signature": "waitForEvent(event: \"filechooser\", options?): Promise<PlaywrightFileChooser>"
             }
           ]
         },
@@ -694,8 +693,7 @@
           "name": "setFiles",
           "kind": "method",
           "signature": "setFiles(files, options?): Promise<void>",
-          "command": "playwright",
-          "unsupportedByDefaultIn": ["iab"]
+          "command": "playwright"
         }
       ]
     },

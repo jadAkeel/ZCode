@@ -116,5 +116,9 @@ keypress? })` scrolls from the supplied viewport anchor. `dom_cua.scroll({ node_
   `locator.waitFor(...)`, `waitForURL(...)`, `waitForLoadState(...)`, or a fresh semantic observation.
 - Routine locator, URL/load-state wait, and evaluate operations default to and are capped at 3000ms.
   A timeout is a signal to refresh the snapshot and rebuild the locator, not to retry it unchanged.
-- IAB does not support file upload: `waitForEvent("filechooser")` / `fileChooser.setFiles(...)` fail with
-  `capability_unsupported`; no fake upload success is exposed.
+- IAB supports local file upload through `waitForEvent("filechooser")` / `fileChooser.setFiles(...)`
+  in the same existing tab and session. Arm the event waiter concurrently with the actual picker
+  click, then assign approved absolute desktop-local paths. The desktop requests one-time approval
+  of the canonical files and destination URL. `setFiles([])` cancels/clears selection. Handles are
+  tab/owner/guest-bound, single-use and expire after 120 seconds. Selection alone is not proof of
+  upload: verify the site's receipt/success response. See the control-browser skill for the workflow.

@@ -304,7 +304,6 @@ const FALLBACK_MANIFEST: BrowserApiManifest = {
             {
               signature:
                 'waitForEvent(event: "filechooser", options?): Promise<PlaywrightFileChooser>',
-              unsupportedByDefaultIn: ["iab"],
             },
           ],
         },
@@ -419,7 +418,6 @@ const FALLBACK_MANIFEST: BrowserApiManifest = {
           kind: "method",
           signature: "setFiles(files, options?): Promise<void>",
           command: "playwright",
-          unsupportedByDefaultIn: ["iab"],
         },
       ],
     },

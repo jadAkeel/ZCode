@@ -21,6 +21,19 @@ const IAB_INFO: BrowserInfo = {
   capabilities: { browser: [], tab: [] },
 };
 
+it("IAB chooser API retains path arrays and supports explicit empty cancellation", async () => {
+  const calls: BrowserCommand[] = [];
+  const api = new PlaywrightAPI(async command => {
+    calls.push(command);
+    return { ok: true, value: { id: "chooser-1", isMultiple: true }, elapsedMs: 0 };
+  });
+  const chooser = await api.waitForEvent("filechooser", { timeoutMs: 1000 });
+  expect(chooser.isMultiple()).toBe(true);
+  await chooser.setFiles(["C:\\fixture\\synthetic.pdf", "C:\\fixture\\second.pdf"]);
+  await chooser.setFiles([]);
+  expect(calls[2]).toMatchObject({ method: "playwright", action: { name: "fileChooserSetFiles", fileChooserId: "chooser-1", files: [] } });
+});
+
 function createFacade(
   execute: (command: BrowserCommand) => Promise<BrowserCommandResult>,
   infos: BrowserInfo[] = [IAB_INFO],

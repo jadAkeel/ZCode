@@ -193,8 +193,8 @@ describe("browser capability manifest", () => {
     expect(documentation).toContain("ambient UI state, not a browser-selection instruction");
     expect(documentation).toContain("nodeRepl.emitImage(await tab.screenshot())");
     expect(documentation).toContain("Never use tab.screenshot() as the final expression");
-    expect(documentation).not.toContain('waitForEvent(event: "filechooser"');
-    expect(documentation).not.toContain("setFiles(files");
+    expect(documentation).toContain('waitForEvent(event: "filechooser"');
+    expect(documentation).toContain("setFiles(files");
     expect(documentation).not.toContain("elementInfo(options:");
     expect(documentation).not.toContain("elementScreenshot(options:");
     expect(documentation).not.toContain("downloadMedia(options: CuaDownloadMediaOptions");

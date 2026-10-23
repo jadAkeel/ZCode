@@ -1,4 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+// Browser lifecycle tests do not exercise disk logging; keep imported locator diagnostics isolated.
+vi.mock("../src/main/logger.js", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 import type { BrowserScreenshotSurfaceCoordinator } from "../src/main/browserView/browserScreenshotSurfaceCoordinator.js";
 import type { BrowserGuestExecutionContext } from "../src/main/browserView/browserGuestManager.js";
 import type { BrowserWebmRecorderFactory } from "../src/main/browserView/browserVideoRecorder.js";
@@ -2158,7 +2162,7 @@ describe("BrowserGuestManager", () => {
     });
   });
 
-  it("IAB 明确拒绝 Playwright filechooser", async () => {
+  it("IAB filechooser waits for a real guest event and times out without one", async () => {
     registerGuest(203);
     const mgr = new BrowserGuestManager();
     mgr.attachGuest("upload-tab", 203);
@@ -2169,7 +2173,179 @@ describe("BrowserGuestManager", () => {
       }),
     ).resolves.toMatchObject({
       ok: false,
-      error: { code: "capability_unsupported" },
+      error: { code: "timeout" },
+    });
+    mgr.disposeAll();
+  });
+
+  describe("IAB chooser ownership and lifecycle", () => {
+    function uploadFixture() {
+      const { guest, spy } = registerGuest(620);
+      const manager = new BrowserGuestManager();
+      manager.attachGuest("upload-owned", 620, {
+        windowId: 1,
+        workspaceKey: "/repo",
+        sessionId: "owner",
+      });
+      const context = {
+        requestId: "wait",
+        browserId: "unclaimed-iab",
+        browserGeneration: 0,
+        windowId: 1,
+        workspaceKey: "/repo",
+        sessionId: "owner",
+        clientMode: "desktop-continuous" as const,
+      };
+      const wait = () =>
+        manager.execute(
+          { ...context, requestId: `wait-${Math.random()}` },
+          {
+            method: "playwright",
+            tabId: "upload-owned",
+            action: { name: "waitForEvent", event: "filechooser", timeoutMs: 1000 },
+          },
+        );
+      const armed = () =>
+        vi.waitFor(() =>
+          expect(spy.cdpCalls).toContainEqual({
+            method: "Page.setInterceptFileChooserDialog",
+            params: { enabled: true },
+          }),
+        );
+      return { manager, context, guest, spy, wait, armed };
+    }
+
+    it("binds IDs to the full owner scope and refuses cross-tab reuse", async () => {
+      const f = uploadFixture();
+      const waiting = f.wait();
+      await f.armed();
+      f.guest.__emitCdpMessage("Page.fileChooserOpened", {
+        backendNodeId: 42,
+        frameId: "main",
+        mode: "selectMultiple",
+      });
+      const result = await waiting;
+      expect(result).toMatchObject({ ok: true, value: { isMultiple: true } });
+      const id = (result.value as { id: string }).id;
+      for (const patch of [
+        { sessionId: "other" },
+        { browserGeneration: 2 },
+        { windowId: 2 },
+        { workspaceKey: "/other" },
+        { remoteSessionId: "remote" },
+        { turnId: "different-turn" },
+        { clientMode: "web-remote-replayable" as const },
+      ]) {
+        await expect(
+          f.manager.execute(
+            { ...f.context, ...patch, requestId: `attack-${Math.random()}` },
+            {
+              method: "playwright",
+              tabId: "upload-owned",
+              action: { name: "fileChooserSetFiles", fileChooserId: id, files: [] },
+            },
+          ),
+        ).resolves.toMatchObject({ ok: false, error: { code: "backend_unavailable" } });
+      }
+      registerGuest(621);
+      f.manager.attachGuest("different-upload-tab", 621, {
+        windowId: 1,
+        workspaceKey: "/repo",
+        sessionId: "owner",
+      });
+      await expect(
+        f.manager.execute(
+          { ...f.context, requestId: "wrong-tab" },
+          {
+            method: "playwright",
+            tabId: "different-upload-tab",
+            action: { name: "fileChooserSetFiles", fileChooserId: id, files: [] },
+          },
+        ),
+      ).resolves.toMatchObject({ ok: false, error: { code: "backend_unavailable" } });
+      expect(f.spy.cdpCalls.some((call) => call.method === "DOM.setFileInputFiles")).toBe(false);
+      f.manager.disposeAll();
+    });
+
+    it("invalidates IDs on frame navigation and guest replacement", async () => {
+      const f = uploadFixture();
+      const waiting = f.wait();
+      await f.armed();
+      f.guest.__emitCdpMessage("Page.fileChooserOpened", {
+        backendNodeId: 42,
+        frameId: "main",
+        mode: "selectSingle",
+      });
+      const result = await waiting;
+      f.guest.__emitCdpMessage("Page.frameNavigated", {
+        frame: { id: "main", url: "https://new.example" },
+      });
+      await expect(
+        f.manager.execute(
+          { ...f.context, requestId: "stale" },
+          {
+            method: "playwright",
+            tabId: "upload-owned",
+            action: {
+              name: "fileChooserSetFiles",
+              fileChooserId: (result.value as { id: string }).id,
+              files: [],
+            },
+          },
+        ),
+      ).resolves.toMatchObject({ ok: false, error: { code: "backend_unavailable" } });
+      const pending = f.wait();
+      await Promise.resolve();
+      registerGuest(622);
+      f.manager.attachGuest("upload-owned", 622, {
+        windowId: 1,
+        workspaceKey: "/repo",
+        sessionId: "owner",
+      });
+      expect((await pending).ok).toBe(false);
+      f.manager.disposeAll();
+    });
+
+    it("tab close cancels an armed wait instead of waiting for its deadline", async () => {
+      const f = uploadFixture();
+      const pending = f.wait();
+      await f.armed();
+      await f.manager.execute(
+        { ...f.context, requestId: "close-upload" },
+        { method: "close", tabId: "upload-owned" },
+      );
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "cancelled" } });
+      f.manager.disposeAll();
+    });
+
+    it("a late old-turn end cannot cancel the current turn's chooser", async () => {
+      const f = uploadFixture();
+      const context = { ...f.context, browserId: "iab", browserGeneration: 1 };
+      expect(
+        (
+          await f.manager.execute(
+            { ...context, requestId: "claim-upload" },
+            { method: "claimTab", tabId: "upload-owned" },
+          )
+        ).ok,
+      ).toBe(true);
+      const pending = f.manager.execute(
+        { ...context, requestId: "current-wait", turnId: "current" },
+        {
+          method: "playwright",
+          tabId: "upload-owned",
+          action: { name: "waitForEvent", event: "filechooser", timeoutMs: 1000 },
+        },
+      );
+      await f.armed();
+      f.manager.endTurn({ ...context, turnId: "old" }, "old");
+      f.guest.__emitCdpMessage("Page.fileChooserOpened", {
+        backendNodeId: 42,
+        frameId: "main",
+        mode: "selectSingle",
+      });
+      await expect(pending).resolves.toMatchObject({ ok: true, value: { isMultiple: false } });
+      f.manager.disposeAll();
     });
   });
 
