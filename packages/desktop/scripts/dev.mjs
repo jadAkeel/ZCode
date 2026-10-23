@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { request } from "node:http";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -129,7 +129,16 @@ if (process.platform === "darwin" && existsSync(electronBinary)) {
   console.log(`[dev] Prepared macOS ZCode Dev bundle: ${devBundle.appPath}`);
 }
 
-const electron = spawn(electronCommand, ["."], {
+// 隔离 userData 必须在 SDK 的 ESM 导入执行前交给 Electron；仅等 main 里的 setPath 太晚。
+const electronArgs = ["."];
+const isolatedUserData = process.env.ZCODE_DESKTOP_USER_DATA_DIR?.trim();
+if (isolatedUserData) {
+  await mkdir(isolatedUserData, { recursive: true });
+  electronArgs.push(`--user-data-dir=${resolve(isolatedUserData)}`);
+}
+const isolatedSessionData = process.env.ZCODE_DESKTOP_SESSION_DATA_DIR?.trim();
+if (isolatedSessionData) await mkdir(isolatedSessionData, { recursive: true });
+const electron = spawn(electronCommand, electronArgs, {
   cwd: root,
   stdio: "inherit",
   env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl },

@@ -67,9 +67,9 @@ and host. Its temporary synthetic files/profile remain available for inspection.
 
 ## Full desktop development and Windows installer
 
-These are the source repository's build routes; a full installer was not built in this investigation
-because the workspace dependency installation was incomplete. Complete the dependency step and
-full type/lint gates first. Required downloads include Electron/runtime assets and packaging tools.
+These are the source repository's full build routes. Complete the dependency step and full type/lint
+gates first. Required downloads include Electron/runtime assets and packaging tools. A fixture pass
+and a successful full desktop/package build are separate checks; record the outcome of each.
 
 ```powershell
 # Isolate development storage before invoking app/runtime build or launch commands.

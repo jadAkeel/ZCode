@@ -17,6 +17,14 @@ if not exist "%PROFILE_ROOT%" (
 )
 if not exist "%PROFILE_ROOT%\.iab-preview-profile" echo Isolated ZCode IAB Preview profile>"%PROFILE_ROOT%\.iab-preview-profile"
 if not exist "%PROFILE_ROOT%\.iab-preview-profile" exit /b 1
+if not exist "%PROFILE_ROOT%\electron" (
+  mkdir "%PROFILE_ROOT%\electron"
+  if errorlevel 1 exit /b 1
+)
+if not exist "%PROFILE_ROOT%\electron-session" (
+  mkdir "%PROFILE_ROOT%\electron-session"
+  if errorlevel 1 exit /b 1
+)
 set "HOME=%PROFILE_ROOT%"
 set "USERPROFILE=%PROFILE_ROOT%"
 set "ZCODE_HOME=%PROFILE_ROOT%\.zcode"
@@ -27,5 +35,5 @@ set "ZCODE_DESKTOP_USER_DATA_DIR=%PROFILE_ROOT%\electron"
 set "ZCODE_DESKTOP_SESSION_DATA_DIR=%PROFILE_ROOT%\electron-session"
 set "ZCODE_DESKTOP_SKIP_OS_INTEGRATION=1"
 set "ELECTRON_RUN_AS_NODE="
-start "" /D "%APP_ROOT%artifacts\win-unpacked" "%APP_EXE%"
+start "" /D "%APP_ROOT%artifacts\win-unpacked" "%APP_EXE%" "--user-data-dir=%ZCODE_DESKTOP_USER_DATA_DIR%"
 endlocal

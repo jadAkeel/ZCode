@@ -28,6 +28,10 @@ change callback validation, providers, credentials or application permission rul
 setting, not a persistent user preference, and the app must be rebuilt once to include its guard.
 Use `scripts/start-iab-preview.cmd` beside an `artifacts/win-unpacked` directory for the Windows fork
 layout. It creates a marked, isolated profile and refuses to reuse an existing unmarked directory.
+The launcher creates Electron's userData/sessionData directories and passes `--user-data-dir` at
+process creation. This native argument is required before ESM imports initialize SDK storage; setting
+the main process environment overrides alone happens too late for those imports. The dev launcher
+also forwards an explicit `ZCODE_DESKTOP_USER_DATA_DIR` as this early native argument.
 
 The public upstream Computer Use package is an unavailable-by-design placeholder. A source build
 therefore does not reproduce the proprietary Computer Use implementation from an installed official
